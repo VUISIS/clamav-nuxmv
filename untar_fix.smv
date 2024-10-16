@@ -1,0 +1,130 @@
+
+MODULE main
+  VAR
+    size : -4 .. 4;
+    in_block : boolean;
+    cli_magic_scandesc : 0 .. 1;
+    fout : -1 .. 1;
+    files : 0 .. 1;
+    directory : boolean;
+    skip_entry : boolean;
+    type : 0 .. 2;
+    nskip : -4 .. 4;
+    filepos : 0 .. 12;
+    read_result : -1 .. 4;
+    nread : -1 .. 4;
+    block0 : 0 .. 1;
+    size_reduce : 1 .. 4;
+    random_size : -4 .. 4;
+
+    state : { loop_top, check_done, done, error, virus, read_next_entry,
+      read_block, check_block0_null, check_type, skip_if_directory,
+      update_skip_entry, compute_skip, goto_in_block, update_filepos,
+      check_in_block };
+
+  ASSIGN
+    init(size) := 0;
+    init(fout) := -1;
+    init(filepos) := 0;
+    init(in_block) := FALSE;
+    init(state) := loop_top;
+    init(nskip) := 0;
+
+    next(skip_entry) :=
+      case
+        state = loop_top : FALSE;
+        state = check_type & type = 2 : TRUE;
+        state = update_skip_entry & size < 0 : TRUE;
+        TRUE : skip_entry;
+      esac;
+
+    next(directory) :=
+      case
+        state = loop_top : FALSE;
+        state = check_type & type = 0 : FALSE;
+        state = check_type & type = 1 : TRUE;
+        state = check_type & type = 2 : FALSE;
+        TRUE : directory;
+      esac;
+
+    next(files) :=
+      case
+        state = check_type & type = 0 : 1;
+        TRUE : files;
+      esac;
+
+    next(nread) :=
+      case
+        state = loop_top & filepos = 12 : 0;
+        state = loop_top & filepos < 12 : read_result;
+        TRUE : nread;
+      esac;
+
+    next(nskip) :=
+      case
+        state = compute_skip & (((size mod 4) != 0) | (size = 0)) &
+          (size + 4 - (size mod 4) >= -4) & (size + 4 - (size mod 4) <= 4) : size + 4 - (size mod 4);
+        state = compute_skip : size;
+        TRUE : nskip;
+      esac;
+
+    next(filepos) :=
+      case
+        state = check_done & filepos + nread > 12: 12;
+        state = check_done & filepos + nread < 0: 0;
+        state = check_done : filepos + nread;
+        state = update_filepos & nskip + filepos > 12 : 12;
+        state = update_filepos & nskip + filepos < 0 : 0;
+        state = update_filepos : nskip + filepos;
+        TRUE : filepos;
+      esac;
+
+    next(fout) :=
+      case
+        state = read_next_entry & fout >= 0 : -1;
+        state = goto_in_block : 1;
+        TRUE : fout;
+      esac;
+
+    next(in_block) :=
+      case
+        state = skip_if_directory & directory : FALSE;
+        state = goto_in_block : TRUE;
+        state = check_in_block & size <= 0 : FALSE;
+        TRUE : in_block;
+      esac;
+
+    next(size) :=
+      case
+      state = skip_if_directory : random_size;
+        state = read_block & size_reduce > size : 0;
+        state = read_block & size_reduce <= size : size - size_reduce;
+        TRUE : size;
+      esac;
+
+    next(state) :=
+      case
+        state = loop_top : check_done;
+        state = check_done & !in_block & nread = 0: done;
+        state = check_done & nread < 0: error;
+        state = check_done & !in_block : read_next_entry;
+        state = check_done : read_block;
+        state = read_next_entry & fout >= 0 & cli_magic_scandesc = 1 : virus;
+        state = read_next_entry : check_block0_null;
+        state = check_block0_null & block0 = 0 : done;
+        state = check_block0_null : check_type;
+        state = check_type : skip_if_directory;
+        state = skip_if_directory & directory : loop_top;
+        state = skip_if_directory : update_skip_entry;
+        state = update_skip_entry : compute_skip;
+        state = compute_skip & !skip_entry : goto_in_block;
+        state = goto_in_block : loop_top;
+        state = compute_skip : update_filepos;
+        state = update_filepos & nskip < 0 : done;
+        state = update_filepos : loop_top;
+        state = read_block : check_in_block;
+        state = check_in_block : loop_top;
+        TRUE: state;
+      esac;
+
+ LTLSPEC F (state = done | state = error | state = virus)
